@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>RAG Pipeline</title>
+    <style>
+        :root { --bg: #ffffff; --panel: #f6f8fa; --accent: #0969da; --text: #1f2328; --border: #d0d7de; --yellow-bg: #fff8c5; --yellow-border: #d4a72c; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        header { padding: 15px 25px; border-bottom: 1px solid var(--border); background: #fff; display: flex; justify-content: space-between; align-items: center; }
+        .main-layout { display: flex; flex: 1; overflow: hidden; }
+        .pipeline-nav { width: 280px; padding: 20px; border-right: 1px solid var(--border); overflow-y: auto; background: var(--panel); }
+        .display-area { flex: 1; padding: 30px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+        .node { background: #ffffff; border: 1px solid var(--border); padding: 12px; margin-bottom: 8px; border-radius: 6px; cursor: pointer; font-size: 0.9rem; }
+        .node.active { border: 2px solid var(--accent); font-weight: 600; background: #f0f7ff; }
+        .code-container { background: #1b1f23; padding: 20px; border-radius: 8px 8px 0 0; color: #e6edf3; font-family: 'SFMono-Regular', monospace; line-height: 1.5; font-size: 0.9rem; white-space: pre; overflow-x: auto; }
+        .explanation-panel { background: var(--yellow-bg); border: 1px solid var(--yellow-border); border-top: none; padding: 20px; border-radius: 0 0 8px 8px; color: #24292f; line-height: 1.6; font-size: 0.95rem; margin-bottom: 20px; }
+        .math-box { background: rgba(0,0,0,0.05); padding: 12px; border-radius: 4px; margin: 10px 0; font-family: 'Courier New', monospace; font-weight: bold; border-left: 4px solid var(--yellow-border); }
+        .section-tag { font-size: 0.75rem; color: #57606a; text-transform: uppercase; margin: 15px 0 5px 5px; display: block; font-weight: bold; }
+        select { padding: 8px; border-radius: 6px; border: 1px solid var(--border); cursor: pointer; }
+        b { color: #000; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div style="font-weight: 600; font-size: 1.2rem;">RAG Search Strategy Inspector</div>
+    <select id="strategy" onchange="renderPipeline()">
+        <option value="hybrid">Hybrid Search (BM25 + Vector)</option>
+        <option value="mmr">MMR (Diversity Re-ranking)</option>
+        <option value="transform">Query Transformation</option>
+    </select>
+</header>
+
+<div class="main-layout">
+    <div class="pipeline-nav" id="pipeline-nodes"></div>
+    <div class="display-area" id="display-content"></div>
+</div>
+
+<script>
+    const contentData = {
+        setup: {
+            title: "1. Data Ingestion & Indexing",
+            code: `file_names = ["alberteinstein_clr.pdf", "einstein_biography.pdf", "einstein-albert.pdf"]
+all_docs = []
+
+for file in file_names:
+    loader = PyPDFLoader(file)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=80)
+    chunks = loader.load_and_split(splitter)
+    all_docs.extend(chunks)`,
+            explanation: `<b>In-Depth Logic Analysis:</b>
+            <ul>
+                <li><b>Multi-Source Aggregation:</b> Processes 3 distinct PDFs to ensure comprehensive coverage of Einstein's life.</li>
+                <li><b>Recursive Splitter:</b> Prioritizes structural breaks (paragraphs) to maintain semantic integrity.</li>
+                <li><b>Buffer (800/80):</b> Balances granular detail with factual continuity across chunk boundaries.</li>
+            </ul>`
+        },
+        embeddings: {
+            title: "2. Vector Store & Embeddings",
+            code: `embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+vector_db = FAISS.from_documents(all_docs, embeddings)`,
+            explanation: `<b>In-Depth Logic Analysis:</b>
+            <ul>
+                <li><b>Semantic Encoding:</b> Maps text into 768-dimensional vectors where distance represents conceptual similarity.</li>
+                <li><b>FAISS indexing:</b> Enables sub-second retrieval from thousands of chunks using cosine similarity math.</li>
+            </ul>
+            <div class="math-box">Similarity = (Vector_A · Vector_B) / (||Vector_A|| * ||Vector_B||)</div>`
+        },
+        hybrid: {
+            title: "3. Strategy: Hybrid Retrieval",
+            code: `bm25_retriever = BM25Retriever.from_documents(all_docs)
+vector_retriever = vector_db.as_retriever(search_kwargs={"k": 5})
+
+ensemble_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, vector_retriever],
+    weights=[0.5, 0.5]
+)`,
+            explanation: `<b>In-Depth Hybrid Logic:</b>
+            <ul>
+                <li><b>BM25:</b> Essential for precise keyword matching (IDs, dates, and proper names).</li>
+                <li><b>Vector:</b> Handles conceptual understanding and synonyms.</li>
+                <li><b>Blended Scoring:</b> Uses Reciprocal Rank Fusion to reward documents that rank high in either system.</li>
+            </ul>
+            <div class="math-box">Score(d) = sum( w_engine * 1 / (k + rank(d, engine)) )</div>`
+        },
+        mmr: {
+            title: "3. Strategy: MMR Diversity Retrieval",
+            code: `retriever = vector_db.as_retriever(
+    search_type="mmr",
+    search_kwargs={"k": 5, "fetch_k": 20, "lambda_mult": 0.5}
+)`,
+            explanation: `<b>In-Depth MMR Logic:</b>
+            <ul>
+                <li><b>Redundancy Filter:</b> Specifically designed to skip chunks that repeat information already selected.</li>
+                <li><b>fetch_k=20:</b> Over-fetches a larger pool to find more diverse candidate options.</li>
+                <li><b>lambda_mult=0.5:</b> Perfectly balances query relevance against document uniqueness.</li>
+            </ul>
+            <div class="math-box">MMR = arg max [ Lambda * Sim(Q, Di) - (1-Lambda) * max(Sim(Di, Dj)) ]</div>`
+        },
+        transform: {
+            title: "3. Strategy: Query Transformation",
+            code: `multi_query_chain = ( prompt | llm | StrOutputParser() | (lambda x: x.split("\\n")) )`,
+            explanation: `<b>In-Depth Transformation Logic:</b>
+            <ul>
+                <li><b>Multi-Angle Expansion:</b> Rewrites vague queries into 3-5 technical variations.</li>
+                <li><b>Higher Recall:</b> Ensures that if one phrasing misses the target embedding, another will hit it.</li>
+            </ul>`
+        },
+        rerank: {
+            title: "4. Re-Ranking (Cross-Encoder)",
+            code: `from sentence_transformers import CrossEncoder
+model = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+
+sentence_pairs = [[query, doc.page_content] for doc in retrieved_docs]
+scores = model.predict(sentence_pairs)`,
+            explanation: `<b>In-Depth Re-Ranking Logic:</b>
+            <ul>
+                <li><b>Cross-Encoder Architecture:</b> Unlike bi-encoders (vectors), a cross-encoder processes the query and document <b>simultaneously</b>, allowing for deep token-to-token attention.</li>
+                <li><b>High Precision:</b> It captures fine-grained nuances, such as negation or word order, that vector similarity often misses.</li>
+                <li><b>Two-Stage Pipeline:</b> Fast retrieval (Step 3) provides the candidates, and Re-ranking (Step 4) acts as the final "Smart Judge" to ensure Rank #1 is the true best answer.</li>
+            </ul>
+            <div class="math-box">Score = Sigmoid( MLP( Encoder(Query + Document) ) )</div>`
+        },
+        generate: {
+            title: "5. LLM Response Generation",
+            code: `qa_chain = load_qa_chain(llm, chain_type="stuff")
+result = qa_chain.invoke({"input_documents": docs, "question": query})`,
+            explanation: `<b>In-Depth Generation Logic:</b>
+            <ul>
+                <li><b>"Stuff" Chain:</b> Concatenates all final, re-ranked documents into the system context.</li>
+                <li><b>Greedy Decoding (Temp 0):</b> Disables randomness to ensure the model stays grounded in the source text.</li>
+            </ul>
+            <div class="math-box">Selection = argmax(P(token | Context))</div>`
+        }
+    };
+
+    function renderPipeline() {
+        const strategy = document.getElementById('strategy').value;
+        const nav = document.getElementById('pipeline-nodes');
+        nav.innerHTML = `
+            <span class="section-tag">Pipeline Stages</span>
+            <div class="node" id="n-setup" onclick="showBlock('setup')">1. Ingestion</div>
+            <div class="node" id="n-embed" onclick="showBlock('embeddings')">2. Embeddings</div>
+            <span class="section-tag">Strategy</span>
+            <div class="node" id="n-strat" onclick="showBlock('${strategy}')">3. ${strategy.toUpperCase()}</div>
+            <span class="section-tag">Re-Rank</span>
+            <div class="node" id="n-rerank" onclick="showBlock('rerank')">4. RE-RANK</div>
+            <span class="section-tag">Final</span>
+            <div class="node" id="n-generate" onclick="showBlock('generate')">5. Generation</div>
+        `;
+        showBlock('setup');
+    }
+
+    function showBlock(key) {
+        const data = contentData[key];
+        const display = document.getElementById('display-content');
+        display.innerHTML = `
+            <h3 style="margin-top:0; color:var(--accent);">${data.title}</h3>
+            <div class="code-container">${data.code}</div>
+            <div class="explanation-panel">${data.explanation}</div>
+        `;
+        document.querySelectorAll('.node').forEach(n => n.classList.remove('active'));
+        const activeId = (key === 'setup' ? 'n-setup' : (key === 'embeddings' ? 'n-embed' : (key === 'rerank' ? 'n-rerank' : (key === 'generate' ? 'n-generate' : 'n-strat'))));
+        document.getElementById(activeId).classList.add('active');
+    }
+
+    renderPipeline();
+</script>
+</body>
+</html>
